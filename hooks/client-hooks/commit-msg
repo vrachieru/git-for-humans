@@ -5,6 +5,7 @@ COMMIT_MESSAGE_FORMAT="^JIRA-([0-9]+)(.*)$"
 validate_commit_message_format() {
   if ! [[ $1 =~ $COMMIT_MESSAGE_FORMAT ]]; then
     echo_error "Commit message validation failed. (it does not contain a JIRA task id)"
+    echo_error "Please try to commit again with a message that includes one."
     exit 1
   fi
 }
