@@ -1,0 +1,46 @@
+#!/bin/bash
+
+COMMIT_MESSAGE_FORMAT="^JIRA-([0-9]+)(.*)$"
+
+get_revisions() {
+  REVISIONS=$(git rev-list $OLD_REVISION..$NEW_REVISION)
+  IFS='\n' read -ra LIST_OF_REVISIONS <<< "$REVISIONS"
+}
+
+get_commit_from_revision_id() {
+  REVISION=${LIST_OF_REVISIONS[RID]}
+}
+
+get_commit_message() {
+  COMMIT_MESSAGE=$(git cat-file commit $REVISION | sed '1,/^$/d')
+}
+
+validate_commits() {
+  for RID in "${!LIST_OF_REVISIONS[@]}"; do  
+    get_commit_from_revision_id
+    get_commit_message
+    validate_commit_message_format
+  done
+}
+
+validate_commit_message_format() {
+  if ! [[ $COMMIT_MESSAGE =~ $COMMIT_MESSAGE_FORMAT ]]; then
+    echo_error "Commit message validation failed for commit $REVISION. (it does not contain a JIRA task id)"
+    echo_error "Use git commit --amend or git rebase -i to edit the commit message and try again."
+    exit 1
+  fi
+}
+
+echo_error() {
+  echo -e "\e[0;31m$1\e[0m" >&2
+}
+
+main() {
+  while read OLD_REVISION NEW_REVISION REFNAME; do
+    get_revisions
+    validate_commits
+  done
+}
+
+main
+exit 0
