@@ -18,9 +18,11 @@ The post-receive hook runs after the entire process is completed and can be used
 
 1. Create a custom_hooks directory in your repo  
    `mkdir $repo_path/custom_hooks`
-3. Copy the hooks into the newly created folder  
+2. Copy the hooks into the newly created folder  
    `cp <hook> $repo_path/custom_hooks`
-3. Give git ownership over the folder and files  
+3. Rename the hooks leaving just their extensions (merge multiple hooks if necessary)  
+   `mv <hook-name>.<hook-type> <hook-type>`
+4. Give git ownership over the folder and files  
    `chown -R git:git $repo_path/custom_hooks`
-4. Give execution rights to the hooks  
+5. Give execution rights to the hooks  
    `chmod -R 755 $repo_path/custom_hooks`
