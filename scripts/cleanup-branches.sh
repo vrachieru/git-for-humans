@@ -13,8 +13,8 @@ function displayRepository() {
 function getBranches() {
   git pull --all &>/dev/null
   git checkout master &>/dev/null
-  branches=($(git branch | grep -v master))
-  mergedBranches=($(git branch --merged master | grep -v master))
+  branches=($(git branch -r | grep -v master))
+  mergedBranches=($(git branch -r --merged master | grep -v master))
 }
 
 function isMerged() {
