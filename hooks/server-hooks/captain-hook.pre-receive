@@ -1,0 +1,308 @@
+#!/bin/bash
+
+#-#
+#-# Configuration
+#-#
+
+#-# Git
+
+GIT_HOST=''
+
+#-# Regex
+
+COMMIT_MESSAGE_FORMAT="^(PROJ-([0-9]+)|NOJIRA|Merge)(.*)$"
+
+FILE_NAME_INCORRECT_FORMAT="^\"(.*)\"$"
+
+#-# Watchlist
+
+WATCHED_REPOSITORIES=(
+  "*"
+)
+
+WATCHED_BRANCHES=(
+  "*"
+)
+
+WATCHED_FILES=(
+  "*.properties"
+  "*.sql"
+  "*.gradle"
+  "pom.xml"
+)
+
+WATCHERS=(
+)
+
+#-# Email
+
+EMAIL_SENDER=''
+
+SMTP_HOST=''
+SMTP_PORT=''
+SMTP_USERNAME=''
+SMTP_PASSWORD=''
+
+
+#-#
+#-# Git
+#-#
+
+get_repository() {
+  REPOSITORY=$(pwd | sed -n 's#.*/\([^.]*\)\/\([^.]*\).git#\1/\2#p')
+}
+
+get_branch() {
+  # TODO: Check the reftype and modify logic for watched branches (could add watched tags)
+  # [[ "${REFNAME}" =~ refs/heads/* ]] && REFTYPE="branch" || REFTYPE="tag"
+  BRANCH=$(echo "${REFNAME}" | sed -n 's#.*/\([^.]*\)#\1#p')
+}
+
+get_author() {
+  AUTHOR=$(git --no-pager show -s --format='%an' ${NEW_REVISION})
+}
+
+get_revisions() {
+  REVISIONS=($(git rev-list $OLD_REVISION..$NEW_REVISION))
+}
+
+get_commit_message() {
+  COMMIT_MESSAGE=$(git cat-file commit $REVISION | sed '1,/^$/d')
+}
+
+get_files() {
+  FILES=($(git diff --name-only ${OLD_REVISION} ${NEW_REVISION}))
+}
+
+get_diff() {
+  DIFF=$(git diff ${OLD_REVISION} ${NEW_REVISION} -- "$1")
+}
+
+is_creation() {
+  [[ "${OLD_REVISION}" == "0000000000000000000000000000000000000000" ]] && return 0 || return 1
+}
+
+is_deletion() {
+  [[ "${NEW_REVISION}" == "0000000000000000000000000000000000000000" ]] && return 0 || return 1
+}
+
+
+#-#
+#-# Validation
+#-#
+
+validate_commits() {
+  for REVISION in "${REVISIONS[@]}"; do
+    get_commit_message
+    validate_commit_message_format
+  done
+}
+
+validate_commit_message_format() {
+  if ! [[ $COMMIT_MESSAGE =~ $COMMIT_MESSAGE_FORMAT ]]; then
+    echo_error "Commit message validation failed for commit $REVISION."
+    echo_error "${COMMIT_MESSAGE}"
+    echo_error "It does not start with a Jira task id, the NOJIRA tag or the word 'Merge' (which implies a merge commit)."
+    echo_error "Use 'git commit --amend' or 'git rebase -i' to edit the commit message and try again."
+    exit 1
+  fi
+}
+
+validate_file_names() {
+  INVALID_FILE_NAMES=()
+  for FILE in "${FILES[@]}"; do
+    [[ $FILE =~ $FILE_NAME_INCORRECT_FORMAT ]] && INVALID_FILE_NAMES+=($FILE)
+  done
+
+  [[ ${#INVALID_FILE_NAMES[@]} == 0 ]] && return 0
+
+  echo_warning "The following files contain one or more invalid characters in their names:"
+  for FILE in "${INVALID_FILE_NAMES[@]}"; do
+    echo_warning "> $FILE"
+  done
+}
+
+
+#-#
+#-# Watchlist
+#-#
+
+is_watched_repository() {
+  for WATCHED_REPOSITORY in "${WATCHED_REPOSITORIES[@]}"; do
+    [[ $REPOSITORY == $WATCHED_REPOSITORY || $REPOSITORY =~ $WATCHED_REPOSITORY ]] && return 0
+  done
+  return 1
+}
+
+is_watched_branch() {
+  for WATCHED_BRANCH in "${WATCHED_BRANCHES[@]}"; do
+    [[ $BRANCH == $WATCHED_BRANCH || $BRANCH =~ $WATCHED_BRANCH ]] && return 0
+  done
+  return 1
+}
+
+check_watched_files() {
+  MODIFIED_WATCHED_FILES=()
+  for FILE in "${FILES[@]}"; do
+    for WATCHED_FILE in "${WATCHED_FILES[@]}"; do
+      [[ $FILE == $WATCHED_FILE || $FILE =~ $WATCHED_FILE ]] && MODIFIED_WATCHED_FILES+=($FILE)
+    done
+  done
+
+  [[ ${#MODIFIED_WATCHED_FILES[@]} == 0 ]] && return 0
+
+  echo_info ""
+  echo_info "The following files are in the watch list:"
+  for FILE in "${MODIFIED_WATCHED_FILES[@]}"; do
+    echo_info "> $FILE"
+  done
+}
+
+notify_watchers() {
+  if [[ ${#INVALID_FILE_NAMES[@]} > 0 || ${#MODIFIED_WATCHED_FILES[@]} > 0 ]]; then
+    generate_email_headers
+    generate_email_subject
+    generate_email_body
+    send_email
+  fi
+}
+
+
+#-#
+#-# Email
+#-#
+
+generate_email_headers() {
+  MAIL_FROM="${EMAIL_SENDER}"
+  MAIL_TO=$(printf "%s " "${WATCHERS[@]}" )
+}
+
+generate_email_subject() {
+  generate_email_subject_flags
+  MAIL_SUBJECT="[git-hook] [${EMAIL_SUBJECT_FLAGS}] Thar she blows! News on ${REPOSITORY}:${BRANCH}!"
+}
+
+generate_email_subject_flags() {
+  EMAIL_SUBJECT_FLAGS=""
+  [[ ${#INVALID_FILE_NAMES[@]} > 0 ]] && EMAIL_SUBJECT_FLAGS+="i"
+  [[ ${#MODIFIED_WATCHED_FILES[@]} > 0 ]] && EMAIL_SUBJECT_FLAGS+="w"
+}
+
+generate_email_body() {
+  MAIL_BODY="Ahoy there matey,\n\n"
+  MAIL_BODY+="It seems that ${AUTHOR} buried some booty in ${REPOSITORY}, on the ${BRANCH} branch.\n\n"
+
+  MAIL_BODY+="Have a look at ye beauties:\n"
+  for REVISION in "${REVISIONS[@]}"; do
+    get_commit_message
+    MAIL_BODY+="- ${COMMIT_MESSAGE}"
+    MAIL_BODY+="( http://${GIT_HOST}/${REPOSITORY}/commit/$REVISION )\n"
+  done
+
+  if [[ ${#INVALID_FILE_NAMES[@]} > 0 ]]; then
+    get_verb_and_subject ${#INVALID_FILE_NAMES[@]}
+    MAIL_BODY+="\nThere ${VERB} ${#INVALID_FILE_NAMES[@]} ${SUBJECT} containing one or more invalid characters in their names:\n"
+    for FILE in "${INVALID_FILE_NAMES[@]}"; do
+      MAIL_BODY+="- ${FILE}\n"
+    done
+  fi
+
+  if [[ ${#MODIFIED_WATCHED_FILES[@]} > 0 ]]; then
+    get_verb_and_subject ${#MODIFIED_WATCHED_FILES[@]}
+    MAIL_BODY+="\nThere ${VERB} ${#MODIFIED_WATCHED_FILES[@]} ${SUBJECT} with changes that you should be aware of:\n"
+    for FILE in "${MODIFIED_WATCHED_FILES[@]}"; do
+      get_diff "$FILE"
+      MAIL_BODY+="${FILE}\n"
+      MAIL_BODY+="${DIFF}\n\n"
+      MAIL_BODY+="----------------------------------------------------------------------\n\n"
+    done
+  fi
+
+  MAIL_BODY+="Stay awesome,\n"
+  MAIL_BODY+="Git Hook (arrgh)"
+}
+
+get_verb_and_subject() {
+  VERB=$([[ $1 > 1 ]] && echo "are" || echo "is")
+  SUBJECT=$([[ $1 > 1 ]] && echo "files" || echo "file")
+}
+
+send_email() {
+  echo -e "${MAIL_BODY}" | mailx -v \
+       -r "${MAIL_FROM}" \
+       -s "${MAIL_SUBJECT}" \
+       -S smtp="${SMTP_HOST}:${SMTP_PORT}" \
+       -S smtp-auth=login \
+       -S smtp-auth-user="${SMTP_USERNAME}" \
+       -S smtp-auth-password="${SMTP_PASSWORD}" \
+       "${MAIL_TO}" &>/dev/null
+
+  echo_info ""
+  echo_info "Watchers have been notified!"
+}
+
+
+#-#
+#-# Display
+#-#
+
+echo_info() {
+  echo -e "\e[0;35m$1\e[0m"
+}
+
+echo_warning() {
+  echo -e "\e[0;33m$1\e[0m"
+}
+
+echo_error() {
+  echo -e "\e[0;31m$1\e[0m" >&2
+}
+
+echo_nyan() {
+  echo -e "    +             o     +       +    o    +             "
+  echo -e "o         \e[0;31mCannot process commits upon\e[0m      "
+  echo -e "    o  +    \e[0;31mnew branch/tag creation!\e[0m   +   "
+  echo -e "+        o     o       +        o          o            "
+  echo -e "\e[0;31m-_-_-_-_-_-_-_\e[0m,------,      o              "
+  echo -e "\e[1;33m_-_-_-_-_-_-_-\e[0m|   /\\_/\\              +   "
+  echo -e "\e[0;32m-_-_-_-_-_-_-\e[0m~|__( ^ .^)  +              o "
+  echo -e "\e[1;34m_-_-_-_-_-_-_-\e[0m\"\"  \"\"  o       +    o   "
+  echo -e "+      o             +                    +             "
+  echo -e "    +         +           +            o                "
+  echo -e "o        o         o          o                         "
+  echo -e "    o           +       +          o      o             "
+}
+
+
+#-#
+#-# Main
+#-#
+
+main() {
+  while read OLD_REVISION NEW_REVISION REFNAME; do
+    if is_creation; then
+      echo_nyan
+      exit 0
+    elif is_deletion; then
+      exit 0
+    fi
+
+    get_repository
+    get_branch
+    get_author
+
+    get_revisions
+    get_files
+
+    validate_commits
+    validate_file_names
+
+    if is_watched_repository && is_watched_branch; then
+      check_watched_files
+      notify_watchers
+    fi
+  done
+}
+
+main
+exit 0
