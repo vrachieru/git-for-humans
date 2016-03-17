@@ -32,6 +32,7 @@ WATCHED_FILES=(
 )
 
 WATCHERS=(
+  "account@domain.com"
 )
 
 #-# Email
