@@ -20,15 +20,19 @@ while true; do
   esac
 done
 
-id="${1}"
+for id in "${@}"; do
+    echo -e "\nFetching repositories for ${id}..."
 
-repos=`curl -s "https://api.github.com/${type}s/${id}/repos?per_page=${limit}"`
-repo_urls=(`echo "${repos}" | jq -r ".[].${connection}_url"`)
+    repos=`curl -s "https://api.github.com/${type}s/${id}/repos?per_page=${limit}"`
+    repo_urls=(`echo "${repos}" | jq -r ".[].${connection}_url"`)
 
-mkdir -p "${id}"
-cd "${id}"
+    mkdir -p "${id}"
+    cd "${id}"
 
-echo "Found ${#repo_urls[@]} projects"
-for repo_url in "${repo_urls[@]}"; do
-    git clone "${repo_url}"
+    echo "Found ${#repo_urls[@]} repositories"
+    for repo_url in "${repo_urls[@]}"; do
+        git clone "${repo_url}"
+    done
+
+    cd ..
 done

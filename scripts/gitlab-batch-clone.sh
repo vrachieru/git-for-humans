@@ -8,7 +8,7 @@
 domain='' # optional, for private hosted instances
 token='' # optional, get one at: settings > access tokens
 
-type='user' # user or org
+type='user' # user or group
 connection='ssh' # http or ssh
 limit=100
 
@@ -26,23 +26,28 @@ while true; do
   esac
 done
 
-id="${1}"
-url="https://gitlab.com/api/v4/${type}s/${id}/projects?per_page=${limit}"
+for id in "${@}"; do
+    echo -e "\nFetching repositories for ${id}..."
 
-if ! [ -z "${domain}" ]; then
-    url="${url/gitlab.com/$domain}"
-fi
-if ! [ -z "${token}" ]; then
-    url="${url}&private_token=${token}"
-fi
+    url="https://gitlab.com/api/v4/${type}s/${id}/projects?per_page=${limit}"
 
-repos=`curl -s "${url}"`
-repo_urls=(`echo "${repos}" | jq -r ".[].${connection}_url_to_repo"`)
+    if ! [ -z "${domain}" ]; then
+        url="${url/gitlab.com/$domain}"
+    fi
+    if ! [ -z "${token}" ]; then
+        url="${url}&private_token=${token}"
+    fi
 
-mkdir -p "${id}"
-cd "${id}"
+    repos=`curl -s "${url}"`
+    repo_urls=(`echo "${repos}" | jq -r ".[].${connection}_url_to_repo"`)
 
-echo "Found ${#repo_urls[@]} projects"
-for repo_url in "${repo_urls[@]}"; do
-    git clone "${repo_url}"
+    mkdir -p "${id}"
+    cd "${id}"
+
+    echo -e "Found ${#repo_urls[@]} repositories"
+    for repo_url in "${repo_urls[@]}"; do
+        git clone "${repo_url}"
+    done
+
+    cd ..
 done
