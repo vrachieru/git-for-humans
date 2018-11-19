@@ -29,7 +29,7 @@ done
 for id in "${@}"; do
     echo -e "\nFetching repositories for ${id}..."
 
-    url="https://gitlab.com/api/v4/${type}s/${id}/projects?per_page=${limit}"
+    url="https://gitlab.com/api/v4/${type}s/${id////%2F}/projects?per_page=${limit}"
 
     if ! [ -z "${domain}" ]; then
         url="${url/gitlab.com/$domain}"
